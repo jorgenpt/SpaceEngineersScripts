@@ -22,39 +22,99 @@ namespace IngameScript
     partial class Program : MyGridProgram
     {
         const int NUMBER_OF_TENTICKS_BETWEEN_EACH_UPDATE = 10;
+        const string CUSTOMDATA_INGOT_STATUS_CONFIG_PREFIX = "Ingot Status:";
 
-        static readonly string[] INGOT_TYPES = {
-            "Iron",
-            "Nickel",
-            "Silicon",
-            "Silver",
-            "Gold",
-            "Magnesium",
-            "Cobalt",
-            "Platinum",
-            "Uranium",
+        struct IngotConfig
+        {
+            public string Type;
+            public int WarningThreshold;
+            public int AlertThreshold;
+        }
+
+        static readonly IngotConfig[] INGOT_TYPES =
+        {
+            new IngotConfig { Type = "Iron", WarningThreshold = 10000, AlertThreshold = 1000 },
+            new IngotConfig { Type = "Nickel", WarningThreshold = 10000, AlertThreshold = 1000 },
+            new IngotConfig { Type = "Silicon", WarningThreshold = 10000, AlertThreshold = 1000 },
+            new IngotConfig { Type = "Silver", WarningThreshold = 5000, AlertThreshold = 500 },
+            new IngotConfig { Type = "Gold", WarningThreshold = 5000, AlertThreshold = 500 },
+            new IngotConfig { Type = "Magnesium", WarningThreshold = 5000, AlertThreshold = 500 },
+            new IngotConfig { Type = "Cobalt", WarningThreshold = 10000, AlertThreshold = 1000 },
+            new IngotConfig { Type = "Platinum", WarningThreshold = 1, AlertThreshold = 0 },
+            new IngotConfig { Type = "Uranium", WarningThreshold = 1, AlertThreshold = 0 },
         };
 
-        private IMyTextSurfaceProvider textSurface;
-        private List<IMyTerminalBlock> inventoryBlocks = new List<IMyTerminalBlock>();
-        private List<IMyInventory> inventories = new List<IMyInventory>();
-        private MyFixedPoint[] ingotCounts = new MyFixedPoint[INGOT_TYPES.Length];
-        private StringBuilder displayBuilder = new StringBuilder();
+        static readonly Color WARNING_FONT_COLOR = Color.Black;
+        static readonly Color ALERT_FONT_COLOR = Color.Black;
+        static readonly Color WARNING_BACKGROUND_COLOR = Color.DarkOrange;
+        static readonly Color ALERT_BACKGROUND_COLOR = Color.Red;
+
+        private readonly Dictionary<string, int> ingotLookup = new Dictionary<string, int>(INGOT_TYPES.Length);
+        private readonly List<IMyTextSurface>[] textSurfaces = new List<IMyTextSurface>[INGOT_TYPES.Length];
+        private readonly List<IMyTerminalBlock> inventoryBlocks = new List<IMyTerminalBlock>();
+        private readonly List<IMyInventory> inventories = new List<IMyInventory>();
+        private readonly StringBuilder displayBuilder = new StringBuilder();
+        private readonly MyFixedPoint[] ingotCounts = new MyFixedPoint[INGOT_TYPES.Length];
+        private readonly List<IMySoundBlock> alertSoundBlocks = new List<IMySoundBlock>();
+        private readonly List<IMyLightingBlock> alertOrWarningLights = new List<IMyLightingBlock>();
+
         private int ticksUntilNextUpdate = 0;
+
+        enum IngotStatus
+        {
+            Alert,
+            Warning,
+            Normal,
+        };
+
+        private IngotStatus previousIngotStatus = IngotStatus.Normal;
 
         public Program()
         {
             Runtime.UpdateFrequency = UpdateFrequency.Once | UpdateFrequency.Update10;
+
+            for (var ingotIndex = 0; ingotIndex < INGOT_TYPES.Length; ++ingotIndex)
+            {
+                textSurfaces[ingotIndex] = new List<IMyTextSurface>();
+                ingotLookup[INGOT_TYPES[ingotIndex].Type] = ingotIndex;
+            }
         }
 
         public void Main(string argument, UpdateType updateSource)
         {
-            bool updateContainers = updateSource.HasFlag(UpdateType.Update100);
             if (updateSource.HasFlag(UpdateType.Once))
             {
-                // TODO: Look up a text surface?
-                textSurface = Me;
-                updateContainers = true;
+                Me.GetSurface(0).WriteText("Storage Overview");
+
+                // Enumerate all the LCD panels and find the ones that are configured for ingots
+                var textSurfaceProviders = new List<IMyTextSurfaceProvider>();
+                GridTerminalSystem.GetBlocksOfType(textSurfaceProviders);
+                foreach (var textSurfaceProvider in textSurfaceProviders)
+                {
+                    string configData = ((IMyTerminalBlock)textSurfaceProvider).CustomData;
+                    if (configData.StartsWith(CUSTOMDATA_INGOT_STATUS_CONFIG_PREFIX))
+                    {
+                        string ingotType = configData.Substring(CUSTOMDATA_INGOT_STATUS_CONFIG_PREFIX.Length);
+                        int ingotIndex;
+                        if (ingotLookup.TryGetValue(ingotType, out ingotIndex))
+                        {
+                            for (var surfaceIndex = 0; surfaceIndex < textSurfaceProvider.SurfaceCount; ++surfaceIndex)
+                            {
+                                var textSurface = textSurfaceProvider.GetSurface(surfaceIndex);
+                                textSurface.Alignment = TextAlignment.CENTER;
+                                textSurface.Font = "Monospace";
+                                textSurface.FontSize = 2.75f;
+                                textSurface.TextPadding = 15.5f;
+                                textSurface.WriteText($"{ingotType}\nInitializing...");
+                                textSurfaces[ingotIndex].Add(textSurface);
+                            }
+                        }
+                    }
+                }
+
+                // Find all the lights and sound blocks configured for ingot 
+                GridTerminalSystem.GetBlocksOfType(alertSoundBlocks, soundBlock => soundBlock.CustomData.StartsWith(CUSTOMDATA_INGOT_STATUS_CONFIG_PREFIX));
+                GridTerminalSystem.GetBlocksOfType(alertOrWarningLights, interiorLight => interiorLight.CustomData.StartsWith(CUSTOMDATA_INGOT_STATUS_CONFIG_PREFIX));
             }
 
             if (ticksUntilNextUpdate == 0)
@@ -76,32 +136,96 @@ namespace IngameScript
             {
                 for (var ingotIndex = 0; ingotIndex < INGOT_TYPES.Length; ++ingotIndex)
                 {
-                    ingotCounts[ingotIndex] += inventory.GetItemAmount(MyItemType.MakeIngot(INGOT_TYPES[ingotIndex]));
+                    ingotCounts[ingotIndex] += inventory.GetItemAmount(MyItemType.MakeIngot(INGOT_TYPES[ingotIndex].Type));
                 }
             }
 
-            var numIngots = 0;
-            displayBuilder.Clear();
-            displayBuilder.AppendLine("Ingot inventory:");
+            var anyAlerts = false;
+            var anyWarnings = false;
             for (var ingotIndex = 0; ingotIndex < INGOT_TYPES.Length; ++ingotIndex)
             {
+                var ingotConfig = INGOT_TYPES[ingotIndex];
                 var ingotCount = ingotCounts[ingotIndex].ToIntSafe();
-                if (ingotCount > 0)
+                ingotCounts[ingotIndex].RawValue = 0;
+
+                displayBuilder.Clear();
+                displayBuilder.AppendLine(ingotConfig.Type);
+                displayBuilder.AppendLine();
+                displayBuilder.AppendLine(ingotCount.ToString("N0"));
+                displayBuilder.AppendLine("ingots");
+
+                var fontColor = Color.White;
+                var backgroundColor = Color.Black;
+                if (ingotCount < ingotConfig.AlertThreshold)
                 {
-                    ++numIngots;
-                    displayBuilder.AppendLine($"{ingotCount,7} {INGOT_TYPES[ingotIndex]}");
+                    anyAlerts = true;
+                    fontColor = ALERT_FONT_COLOR;
+                    backgroundColor = ALERT_BACKGROUND_COLOR;
+                }
+                else if (ingotCount < ingotConfig.WarningThreshold)
+                {
+                    anyWarnings = true;
+                    fontColor = WARNING_FONT_COLOR;
+                    backgroundColor = WARNING_BACKGROUND_COLOR;
                 }
 
-                ingotCounts[ingotIndex].RawValue = 0;
+                foreach (var textSurface in textSurfaces[ingotIndex])
+                {
+                    textSurface.FontColor = fontColor;
+                    textSurface.BackgroundColor = backgroundColor;
+                    textSurface.WriteText(displayBuilder);
+                }
             }
 
-            if (numIngots == 0)
+            IngotStatus newIngotStatus = IngotStatus.Normal;
+            if (anyAlerts)
             {
-                displayBuilder.AppendLine();
-                displayBuilder.AppendLine("EMPTY!");
+                newIngotStatus = IngotStatus.Alert;
+            }
+            else if (anyWarnings)
+            {
+                newIngotStatus = IngotStatus.Warning;
             }
 
-            textSurface.GetSurface(0).WriteText(displayBuilder);
+            if (previousIngotStatus != newIngotStatus)
+            {
+                previousIngotStatus = newIngotStatus;
+                switch (newIngotStatus)
+                {
+                    case IngotStatus.Alert:
+                        foreach (var soundBlock in alertSoundBlocks)
+                        {
+                            soundBlock.Play();
+                        }
+                        foreach (var interiorLight in alertOrWarningLights)
+                        {
+                            interiorLight.Enabled = true;
+                            interiorLight.Color = ALERT_BACKGROUND_COLOR;
+                        }
+                        break;
+                    case IngotStatus.Warning:
+                        foreach (var soundBlock in alertSoundBlocks)
+                        {
+                            soundBlock.Stop();
+                        }
+                        foreach (var interiorLight in alertOrWarningLights)
+                        {
+                            interiorLight.Enabled = true;
+                            interiorLight.Color = WARNING_BACKGROUND_COLOR;
+                        }
+                        break;
+                    case IngotStatus.Normal:
+                        foreach (var soundBlock in alertSoundBlocks)
+                        {
+                            soundBlock.Stop();
+                        }
+                        foreach (var interiorLight in alertOrWarningLights)
+                        {
+                            interiorLight.Enabled = false;
+                        }
+                        break;
+                }
+            }
         }
     }
 }
