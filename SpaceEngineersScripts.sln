@@ -1,0 +1,22 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.29728.190
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "StorageOverview", "StorageOverview\StorageOverview.csproj", "{01507646-808C-496C-96B3-C5D40CB5C505}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{01507646-808C-496C-96B3-C5D40CB5C505}.Debug|x64.ActiveCfg = Debug|x64
+		{01507646-808C-496C-96B3-C5D40CB5C505}.Debug|x64.Build.0 = Debug|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {954F75A9-757F-4E9D-A3D3-4AFA83A43E32}
+	EndGlobalSection
+EndGlobal
