@@ -10,6 +10,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 		.editorconfig = .editorconfig
 	EndProjectSection
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InventorySorter", "InventorySorter\InventorySorter.csproj", "{7670E7D8-60A6-4D96-819A-6CDB300320AD}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -17,6 +19,8 @@ Global
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{01507646-808C-496C-96B3-C5D40CB5C505}.Debug|x64.ActiveCfg = Debug|x64
 		{01507646-808C-496C-96B3-C5D40CB5C505}.Debug|x64.Build.0 = Debug|x64
+		{7670E7D8-60A6-4D96-819A-6CDB300320AD}.Debug|x64.ActiveCfg = Debug|x64
+		{7670E7D8-60A6-4D96-819A-6CDB300320AD}.Debug|x64.Build.0 = Debug|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
