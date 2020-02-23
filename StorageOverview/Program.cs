@@ -21,44 +21,64 @@ namespace IngameScript
 {
     partial class Program : MyGridProgram
     {
+        #region Fixed configuration
         const int NUMBER_OF_TENTICKS_BETWEEN_EACH_UPDATE = 10;
         const string CUSTOMDATA_INGOT_STATUS_CONFIG_PREFIX = "Ingot Status:";
+        // We multiply the ConversionRatio by 2.0 since we use max efficiency refinery mods on our refineries -- otherwise this is a pain in the ass to calculate
+        const float REFINERY_EFFICIENCY = 2.0f;
 
         struct IngotConfig
         {
+            // The "Type" passed to MyItemType.MakeIngot and MyItemType.MakeOre
             public string Type;
+            // If we have less than this, consider us at the "warning" level for this type
             public int WarningThreshold;
+            // If we have less than this, consider us at the "alert" level for this type
             public int AlertThreshold;
+            // What is the conversion ratio for ore-to-ingot?
+            public float ConversionRatio;
         }
 
         static readonly IngotConfig[] INGOT_TYPES =
         {
-            new IngotConfig { Type = "Iron", WarningThreshold = 10000, AlertThreshold = 1000 },
-            new IngotConfig { Type = "Nickel", WarningThreshold = 10000, AlertThreshold = 1000 },
-            new IngotConfig { Type = "Silicon", WarningThreshold = 10000, AlertThreshold = 1000 },
-            new IngotConfig { Type = "Silver", WarningThreshold = 5000, AlertThreshold = 500 },
-            new IngotConfig { Type = "Gold", WarningThreshold = 5000, AlertThreshold = 500 },
-            new IngotConfig { Type = "Magnesium", WarningThreshold = 5000, AlertThreshold = 500 },
-            new IngotConfig { Type = "Cobalt", WarningThreshold = 10000, AlertThreshold = 1000 },
-            new IngotConfig { Type = "Platinum", WarningThreshold = 1, AlertThreshold = 0 },
-            new IngotConfig { Type = "Uranium", WarningThreshold = 1, AlertThreshold = 0 },
+            new IngotConfig { Type = "Iron",        WarningThreshold = 10000,   AlertThreshold = 1000,  ConversionRatio = 0.7f, },
+            new IngotConfig { Type = "Silicon",     WarningThreshold = 10000,   AlertThreshold = 1000,  ConversionRatio = 0.7f, },
+            new IngotConfig { Type = "Nickel",      WarningThreshold = 6000,    AlertThreshold = 600,   ConversionRatio = 0.4f, },
+            new IngotConfig { Type = "Cobalt",      WarningThreshold = 5000,    AlertThreshold = 500,   ConversionRatio = 0.3f, },
+            new IngotConfig { Type = "Silver",      WarningThreshold = 3000,    AlertThreshold = 300,   ConversionRatio = 0.1f, },
+            new IngotConfig { Type = "Gold",        WarningThreshold = 2000,    AlertThreshold = 200,   ConversionRatio = 0.01f, },
+            new IngotConfig { Type = "Uranium",     WarningThreshold = 1,       AlertThreshold = 0,     ConversionRatio = 0.01f, },
+            new IngotConfig { Type = "Magnesium",   WarningThreshold = 1000,    AlertThreshold = 100,   ConversionRatio = 0.007f, },
+            new IngotConfig { Type = "Platinum",    WarningThreshold = 1,       AlertThreshold = 0,     ConversionRatio = 0.005f, },
         };
 
         static readonly Color WARNING_FONT_COLOR = Color.Black;
         static readonly Color ALERT_FONT_COLOR = Color.Black;
         static readonly Color WARNING_BACKGROUND_COLOR = Color.DarkOrange;
         static readonly Color ALERT_BACKGROUND_COLOR = Color.Red;
+        #endregion
 
+        // A mapping of ingot type ("Iron", "Silicon", etc) to the index in the INGOT_TYPES array.
         private readonly Dictionary<string, int> ingotLookup = new Dictionary<string, int>(INGOT_TYPES.Length);
-        private readonly List<IMyTextSurface>[] textSurfaces = new List<IMyTextSurface>[INGOT_TYPES.Length];
+        // Reused List for all blocks with inventories
         private readonly List<IMyTerminalBlock> inventoryBlocks = new List<IMyTerminalBlock>();
-        private readonly List<IMyInventory> inventories = new List<IMyInventory>();
+        // Reused StringBuilder for setting status for each ingot type this tick
         private readonly StringBuilder displayBuilder = new StringBuilder();
+        // Reused array for the counts of each ingot type this tick
         private readonly MyFixedPoint[] ingotCounts = new MyFixedPoint[INGOT_TYPES.Length];
-        private readonly List<IMySoundBlock> alertSoundBlocks = new List<IMySoundBlock>();
-        private readonly List<IMyLightingBlock> alertOrWarningLights = new List<IMyLightingBlock>();
+        // Rused array for the counts of each ingot type's ore this tick
+        private readonly MyFixedPoint[] oreCounts = new MyFixedPoint[INGOT_TYPES.Length];
 
-        private int ticksUntilNextUpdate = 0;
+        // A mapping from index in INGOT_TYPES to the text surfaces we're updating with a status, updated on first run
+        private readonly List<IMyTextSurface>[] textSurfaces = new List<IMyTextSurface>[INGOT_TYPES.Length];
+        // Cached list of inventories we're currently considering (updated every NUMBER_OF_TENTICKS_BETWEEN_EACH_UPDATE ten-ticks)
+        private readonly List<IMyInventory> inventories = new List<IMyInventory>();
+        // All the sound blocks we activate when we're in the alert state, updated on first run
+        private readonly List<IMySoundBlock> alertSoundBlocks = new List<IMySoundBlock>();
+        // All the light blocks we activate when we're in the alert or warning states, updated on the first run
+        private readonly List<IMyLightingBlock> alertOrWarningLights = new List<IMyLightingBlock>();
+        // How many Update10 ticks until we update the cached list of inventories 
+        private int tenticksUntilNextUpdate = 0;
 
         enum IngotStatus
         {
@@ -66,7 +86,8 @@ namespace IngameScript
             Warning,
             Normal,
         };
-
+        
+        // What status was the worst ingot type last tick?
         private IngotStatus previousIngotStatus = IngotStatus.Normal;
 
         public Program()
@@ -82,6 +103,8 @@ namespace IngameScript
 
         public void Main(string argument, UpdateType updateSource)
         {
+            #region Initial setup
+            // Do some initial setup on the first call
             if (updateSource.HasFlag(UpdateType.Once))
             {
                 Me.GetSurface(0).WriteText("Storage Overview");
@@ -103,8 +126,8 @@ namespace IngameScript
                                 var textSurface = textSurfaceProvider.GetSurface(surfaceIndex);
                                 textSurface.Alignment = TextAlignment.CENTER;
                                 textSurface.Font = "Monospace";
-                                textSurface.FontSize = 2.75f;
-                                textSurface.TextPadding = 15.5f;
+                                textSurface.FontSize = 2.4f;
+                                textSurface.TextPadding = 8.0f;
                                 textSurface.WriteText($"{ingotType}\nInitializing...");
                                 textSurfaces[ingotIndex].Add(textSurface);
                             }
@@ -116,8 +139,11 @@ namespace IngameScript
                 GridTerminalSystem.GetBlocksOfType(alertSoundBlocks, soundBlock => soundBlock.CustomData.StartsWith(CUSTOMDATA_INGOT_STATUS_CONFIG_PREFIX));
                 GridTerminalSystem.GetBlocksOfType(alertOrWarningLights, interiorLight => interiorLight.CustomData.StartsWith(CUSTOMDATA_INGOT_STATUS_CONFIG_PREFIX));
             }
+            #endregion
 
-            if (ticksUntilNextUpdate == 0)
+            #region Update list of inventories
+            // Only update the list of inventories we care about 
+            if (tenticksUntilNextUpdate == 0)
             {
                 inventories.Clear();
                 GridTerminalSystem.GetBlocksOfType(inventoryBlocks, otherBlock => otherBlock.IsSameConstructAs(Me) && otherBlock.HasInventory);
@@ -128,18 +154,25 @@ namespace IngameScript
                         inventories.Add(inventoryBlock.GetInventory(inventoryIndex));
                     }
                 }
-                ticksUntilNextUpdate = NUMBER_OF_TENTICKS_BETWEEN_EACH_UPDATE;
+                tenticksUntilNextUpdate = NUMBER_OF_TENTICKS_BETWEEN_EACH_UPDATE - 1;
+                return;
             }
-            ticksUntilNextUpdate--;
+            #endregion
 
+            tenticksUntilNextUpdate--;
+
+            // Count the ingots & ores of each ingot type
             foreach (var inventory in inventories)
             {
                 for (var ingotIndex = 0; ingotIndex < INGOT_TYPES.Length; ++ingotIndex)
                 {
                     ingotCounts[ingotIndex] += inventory.GetItemAmount(MyItemType.MakeIngot(INGOT_TYPES[ingotIndex].Type));
+                    oreCounts[ingotIndex] += inventory.GetItemAmount(MyItemType.MakeOre(INGOT_TYPES[ingotIndex].Type));
                 }
             }
 
+            #region Update each ingot type
+            // Update the status of each ingot type
             var anyAlerts = false;
             var anyWarnings = false;
             for (var ingotIndex = 0; ingotIndex < INGOT_TYPES.Length; ++ingotIndex)
@@ -147,13 +180,22 @@ namespace IngameScript
                 var ingotConfig = INGOT_TYPES[ingotIndex];
                 var ingotCount = ingotCounts[ingotIndex].ToIntSafe();
                 ingotCounts[ingotIndex].RawValue = 0;
-
+                var oreCount = oreCounts[ingotIndex].ToIntSafe();
+                oreCounts[ingotIndex].RawValue = 0;
+                
+                // Generate the text for the display
                 displayBuilder.Clear();
                 displayBuilder.AppendLine(ingotConfig.Type);
                 displayBuilder.AppendLine();
                 displayBuilder.AppendLine(ingotCount.ToString("N0"));
-                displayBuilder.AppendLine("ingots");
+                displayBuilder.AppendLine("available");
+                if ((oreCount * ingotConfig.ConversionRatio) >= 1)
+                {
+                    displayBuilder.AppendLine((oreCount * ingotConfig.ConversionRatio * REFINERY_EFFICIENCY).ToString("N0"));
+                    displayBuilder.AppendLine("processing");
+                }
 
+                // Determine if there are any alerts or warnings, and pick the right font & background color
                 var fontColor = Color.White;
                 var backgroundColor = Color.Black;
                 if (ingotCount < ingotConfig.AlertThreshold)
@@ -176,7 +218,10 @@ namespace IngameScript
                     textSurface.WriteText(displayBuilder);
                 }
             }
+            #endregion
 
+            #region Update global warning / alert systems
+            // See if the worst status has changed and updated sound blocks & lights
             IngotStatus newIngotStatus = IngotStatus.Normal;
             if (anyAlerts)
             {
@@ -233,6 +278,7 @@ namespace IngameScript
                     }
                 }
             }
+            #endregion
         }
     }
 }
