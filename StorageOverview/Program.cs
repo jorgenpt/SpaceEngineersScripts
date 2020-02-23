@@ -190,40 +190,47 @@ namespace IngameScript
             if (previousIngotStatus != newIngotStatus)
             {
                 previousIngotStatus = newIngotStatus;
+                bool playSound = false;
+                Color? optionalLightColor = null;
+                
                 switch (newIngotStatus)
                 {
                     case IngotStatus.Alert:
-                        foreach (var soundBlock in alertSoundBlocks)
-                        {
-                            soundBlock.Play();
-                        }
-                        foreach (var interiorLight in alertOrWarningLights)
-                        {
-                            interiorLight.Enabled = true;
-                            interiorLight.Color = ALERT_BACKGROUND_COLOR;
-                        }
+                        playSound = true;
+                        optionalLightColor = ALERT_BACKGROUND_COLOR;
                         break;
                     case IngotStatus.Warning:
-                        foreach (var soundBlock in alertSoundBlocks)
-                        {
-                            soundBlock.Stop();
-                        }
-                        foreach (var interiorLight in alertOrWarningLights)
-                        {
-                            interiorLight.Enabled = true;
-                            interiorLight.Color = WARNING_BACKGROUND_COLOR;
-                        }
+                        optionalLightColor = WARNING_BACKGROUND_COLOR;
                         break;
-                    case IngotStatus.Normal:
-                        foreach (var soundBlock in alertSoundBlocks)
-                        {
-                            soundBlock.Stop();
-                        }
-                        foreach (var interiorLight in alertOrWarningLights)
-                        {
-                            interiorLight.Enabled = false;
-                        }
-                        break;
+                }
+
+                foreach (var soundBlock in alertSoundBlocks)
+                {
+                    if (playSound)
+                    {
+                        soundBlock.Play();
+                    }
+                    else
+					{
+                        soundBlock.Stop();
+                    }
+                }
+
+                if (optionalLightColor.HasValue)
+                {
+                    Color lightColor = optionalLightColor.Value;
+                    foreach (var interiorLight in alertOrWarningLights)
+                    {
+                        interiorLight.Enabled = true;
+                        interiorLight.Color = lightColor;
+                    }
+                }
+                else
+                {
+                    foreach (var interiorLight in alertOrWarningLights)
+                    {
+                        interiorLight.Enabled = false;
+                    }
                 }
             }
         }
