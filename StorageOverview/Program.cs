@@ -112,7 +112,7 @@ namespace IngameScript
                     }
                 }
 
-                // Find all the lights and sound blocks configured for ingot 
+                // Find all the lights and sound blocks configured for ingot
                 GridTerminalSystem.GetBlocksOfType(alertSoundBlocks, soundBlock => soundBlock.CustomData.StartsWith(CUSTOMDATA_INGOT_STATUS_CONFIG_PREFIX));
                 GridTerminalSystem.GetBlocksOfType(alertOrWarningLights, interiorLight => interiorLight.CustomData.StartsWith(CUSTOMDATA_INGOT_STATUS_CONFIG_PREFIX));
             }
